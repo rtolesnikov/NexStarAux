@@ -161,7 +161,9 @@ class NexStarAux:
         self.GPS_SET = []
         
         for dev_name in self.DEV_IDS.keys():
-            self.REV_DEV_IDS[self.DEV_IDS[dev_name]] = dev_name
+            # Prefer equatorial device names since there is no way to tell which config the scope is in
+            if dev_name not in ('DEV_AZM', 'DEV_ALT'):
+                self.REV_DEV_IDS[self.DEV_IDS[dev_name]] = dev_name
             if dev_name in ('DEV_RA', 'DEV_DEC', 'DEV_AZM', 'DEV_ALT'):
                 self.MC_SET.append(self.DEV_IDS[dev_name])
             elif dev_name == 'DEV_GPS':
@@ -205,7 +207,7 @@ class NexStarAux:
     
     def alive(self):
         print("Alive")
-        
+    
     def encode_message(self, src, dst, msg_id, data=bytes()):
         if dst in ('DEV_RA', 'DEV_DEC', 'DEV_AZM', 'DEV_ALT') or \
            src in ('DEV_RA', 'DEV_DEC', 'DEV_AZM', 'DEV_ALT'):
@@ -224,8 +226,11 @@ class NexStarAux:
     def validate_message(self,data, strict = True):
         assert len(data) > 0             # Reject empty messages, they will cause run-time errors later, instead of assertion errors
         assert data[0] == self.PREAMBLE  # Ensure that preable is first
+        # print("Passed preamble")
         self.check_CRC(data)             # Ensure correct CRC
+        # print("Passed CRC")
         assert data[1]+3 == len(data)    # Ensure the message is the right length
+        # print("Checking strict: %d"% strict)
         if strict:
             assert data[2] in self.REV_DEV_IDS.keys() # Ensure source is a valid device ID
             assert data[3] in self.REV_DEV_IDS.keys() # Ensure dest is a valid device ID
@@ -278,45 +283,65 @@ class NexStarAux:
             lookup[msg_id] = hex(msg_id)
         src_tag = self.get_dev_tag(src_id)
         dst_tag = self.get_dev_tag(dst_id)
-        
+
         # If message contains decodeable telemetry, grab it
-        if src_id == self.DEV_IDS['DEV_RA'] and msg_id == self.MC_IDS['MC_GET_POSITION'] and len(payload) == 3 :
+        if src_id == self.DEV_IDS['DEV_RA'] and msg_id == self.MC_IDS['MC_GET_POSITION'][0] and len(payload) == 3 :
             # this is RA position report
-            (self.RA,) = struct.unpack('>i',payload + bytes([0]))
+            (self.RA,) = struct.unpack('>I',payload + bytes([0]))
             self.RA >>= 8
             self.RA *= 360.0/(2**24)
             return "%s -> %s (%s, %f)"%(src_tag, dst_tag, lookup[msg_id], self.RA)
-        if src_id == self.DEV_IDS['DEV_DEC'] and msg_id == self.MC_IDS['MC_GET_POSITION'] and len(payload) == 3 :
+        if src_id == self.DEV_IDS['DEV_DEC'] and msg_id == self.MC_IDS['MC_GET_POSITION'][0] and len(payload) == 3 :
             # this is DEC position report
-            (self.DEC,) = struct.unpack('>i',payload + bytes([0]))
+            (self.DEC,) = struct.unpack('>I',payload + bytes([0]))
             self.DEC >>= 8
             self.DEC *= 360.0/(2**24)
             return "%s -> %s (%s, %f)"%(src_tag, dst_tag, lookup[msg_id], self.DEC)
-        if src_id == self.DEV_IDS['DEV_RA'] and msg_id == self.MC_IDS['MC_SLEW_DONE'] and len(payload) == 1 :
+        if src_id == self.DEV_IDS['DEV_RA'] and msg_id == self.MC_IDS['MC_SLEW_DONE'][0] and len(payload) == 1 :
             # This is a RA SLEW DONE report
             self.RA_SLEW_DONE = payload[0] == 0xff
             return "%s -> %s (%s, %d)"%(src_tag, dst_tag, lookup[msg_id], self.RA_SLEW_DONE)
-        if src_id == self.DEV_IDS['DEV_DEC'] and msg_id == self.MC_IDS['MC_SLEW_DONE'] and len(payload) == 1 :
+        if src_id == self.DEV_IDS['DEV_DEC'] and msg_id == self.MC_IDS['MC_SLEW_DONE'][0] and len(payload) == 1 :
             # This is a DEC SLEW DONE report
             self.DEC_SLEW_DONE = payload[0] == 0xff
             return "%s -> %s (%s, %d)"%(src_tag, dst_tag, lookup[msg_id], self.DEC_SLEW_DONE)
-        if src_id == self.DEV_IDS['DEV_RA'] and msg_id == self.MC_IDS['MC_POLL_CORDWRAP'] and len(payload) == 1 :
+        if src_id == self.DEV_IDS['DEV_RA'] and msg_id == self.MC_IDS['MC_POLL_CORDWRAP'][0] and len(payload) == 1 :
             # This is a pollwrap report
             self.RA_CORDWRAP = payload[0] == 0xff
             return "%s -> %s (%s, %d)"%(src_tag, dst_tag, lookup[msg_id], self.DEC_CORDWRAP)
-        if src_id == self.DEV_IDS['DEV_DEC'] and msg_id == self.MC_IDS['MC_POLL_CORDWRAP'] and len(payload) == 1 :
+        if src_id == self.DEV_IDS['DEV_DEC'] and msg_id == self.MC_IDS['MC_POLL_CORDWRAP'][0] and len(payload) == 1 :
             # This is a pollwrap report
             self.DEC_CORDWRAP = payload[0] == 0xff
             return "%s -> %s (%s, %d)"%(src_tag, dst_tag, lookup[msg_id], self.DEC_CORDWRAP)
-
+        if dst_id in  (self.DEV_IDS['DEV_RA'], self.DEV_IDS['DEV_DEC'], self.DEV_IDS['DEV_ALT'], self.DEV_IDS['DEV_AZM']) and \
+           msg_id in  (self.MC_IDS['MC_GOTO_FAST'][0], self.MC_IDS['MC_GOTO_SLOW'][0]) and \
+           len(payload) == 3 :
+           # This is a high precision GOTO request, decode but don't set any telemtry
+           (temp,) = struct.unpack('>I',payload + bytes([0]))
+           temp >>= 8
+           temp *= 360.0/(2**24)
+           return "%s -> %s (%s, %f)"%(src_tag, dst_tag, lookup[msg_id], temp)
+        if dst_id in  (self.DEV_IDS['DEV_RA'], self.DEV_IDS['DEV_DEC'], self.DEV_IDS['DEV_ALT'], self.DEV_IDS['DEV_AZM']) and \
+           msg_id in  (self.MC_IDS['MC_GOTO_FAST'][0], self.MC_IDS['MC_GOTO_SLOW'][0]) and \
+           len(payload) == 2 :
+           # This is a low precision GOTO request, decode but don't set any telemtry
+           (temp,) = struct.unpack('>H',payload)
+           temp *= 360.0/(2**24)
+           return "%s -> %s (%s, %f)"%(src_tag, dst_tag, lookup[msg_id], temp)
 
         # Now use the selected lookup based on the payload size
         # Specific decodeable messages had been intercepted by now, so this decode is for generic messages
         if len(payload) > 0:
-                return "%s -> %s (%s, %s)"%(src_tag, dst_tag, lookup[msg_id], '0x'+payload.hex())
+                try:
+                    return "%s -> %s (%s, %s)"%(src_tag, dst_tag, lookup[msg_id], '0x'+payload.hex())
+                except:
+                    return "%s -> %s (%s, %s)"%(src_tag, dst_tag, hex(msg_id), '0x'+payload.hex())
         else:
-            return "%s -> %s (%s)"%(src_tag, dst_tag, lookup[msg_id])
-    
+            try:
+                return "%s -> %s (%s)"%(src_tag, dst_tag, lookup[msg_id])
+            except KeyError:
+                return "%s -> %s (%s)"%(src_tag, dst_tag, hex(msg_id))
+
     def read(self,size=1):
         'Wrapped read()  so that we can dump anything that has been read'
         temp = self.serial.read(size)
@@ -324,7 +349,7 @@ class NexStarAux:
             self.dumpfile.write(temp)
         return temp
         
-    def read_message(self):
+    def read_message(self, strict = False):
         ''' Reads bytes from a serial port (self.serial) WITHOUT ALIGNMENT assumptions
             Finds a valid message based on the expeced format, even if the first byte read is at a random position in the data stream
             Returns a valid message as a byte() array
@@ -332,15 +357,15 @@ class NexStarAux:
         while (True):
             # print('Testing:', self.in_message)
             if len(self.in_message) == 0:
-                self.in_message  = self.read()
+                self.in_message  = self.read(1)
             elif len(self.in_message) == 1:
                 if self.in_message[0] == self.PREAMBLE:
                     # got preable, try reading number of words
                     # note that preable is the same as MC_POLL_CORDWRAP, and in general is not unique so does not mean too much
-                    self.in_message += self.read()
+                    self.in_message += self.read(1)
                 else:
                     # if a single-byte message is not a preable, there is nothing we can do, discard and read the next byte
-                    self.in_message = self.read()
+                    self.in_message = self.read(1)
             elif len(self.in_message) == 2:
                 # Have two bytes, see if any good
                 if self.in_message[0] == self.PREAMBLE and self.in_message[1] <= 8:
@@ -354,21 +379,22 @@ class NexStarAux:
                 if self.in_message[0] == self.PREAMBLE and self.in_message[1] <= 8:
                     if len(self.in_message) < self.in_message[1]+3:
                         # The message is shorter than it should be
-                        # it could be that the serial port produced less data than requested; request another byte
-                        self.in_message += self.read()
+                        # it could be that the serial port produced less data than requested; request bytes needed to make a full message
+                        self.in_message += self.read(self.in_message[1]+3 - len(self.in_message))
                     else:
                         # this message has a chance, but it could be that we got a start of another message as well, so try to find the shortest valid message
                         test_msg = self.in_message[:self.in_message[1]+3]
                         # print('Almost: ', test_msg)
                         try:
                             # print(self.decode_message(test_msg))
-                            self.validate_message(test_msg)
+                            self.validate_message(test_msg, strict)
                             # This is a good message. Remove it from current queue and return
                             self.in_message = self.in_message[self.in_message[1]+3:]
                             # print('Remaining: ', self.in_message)
                             return test_msg
                         except AssertionError:
                             # Not a valid message;  remove the first byte and try again
+                            print ("Rejected: ", self.in_message.hex())
                             self.in_message = self.in_message[1:]
                 else:
                     # Long message, but wrong, remove the first byte and try again
@@ -402,6 +428,25 @@ class NexStarAux:
     def encode_GPS_GET_VER(self):
         return self.encode_message('DEV_GPS','DEV_HC','GPS_GET_VER',b'\x01\x00')
         
+    @staticmethod
+    def wrap_angle(angle):
+        while angle < 0:   angle += 360.0
+        while angle > 360: angle -= 360.0
+        return float(angle)
+    
+    def encode_MC_SLEW(self, axis, pos, fast_slew = True):
+        if axis not in ('DEV_RA', 'DEV_DEC', 'DEV_ALT', 'DEV_AZM'):
+            raise ValueError("Invalid axis: %s"%axis)
+        
+        if fast_slew:
+            msg_tag = 'MC_GOTO_FAST'
+        else:
+            msg_tag = 'MC_GOTO_SLOW_H'
+        
+        pos_enc = struct.pack(">I",round(2**24*float(self.wrap_angle(pos))/360.0))[1:]
+        return self.encode_message('DEV_HC', axis, msg_tag,pos_enc)
+        
+        
 if __name__ == '__main__':
     print("Hello")
     N = NexStarAux('null', NexStarInputNone())
@@ -423,7 +468,7 @@ if __name__ == '__main__':
     N.check_CRC(b'\x3b\x05\x10\x04\xfe\x04\x03\xe2')
     assert N.encode_message   ('DEV_HC','DEV_AZM','MC_GET_VER',bytes()) == b'\x3b\x03\x04\x10\xfe\xeb'
     assert N.encode_message   ('DEV_HC','DEV_AZM','MC_GET_VER') == b'\x3b\x03\x04\x10\xfe\xeb'
-    assert N.decode_message(b'\x3b\x03\x04\x10\xfe\xeb') == 'DEV_HC -> DEV_AZM (MC_GET_VER)'
+    assert N.decode_message(b'\x3b\x03\x04\x10\xfe\xeb') == 'DEV_HC -> DEV_RA (MC_GET_VER)'
     
     N = NexStarAux("", NexStarInputString(b'\x3b\x03\x04\x10\xfe\xeb'))
     assert N.read_message() == b'\x3b\x03\x04\x10\xfe\xeb'
@@ -454,7 +499,7 @@ if __name__ == '__main__':
 
     t = N.encode_message   ('DEV_HC','DEV_AZM','MC_GOTO_FAST', b'123')
     print(N.decode_message(t))
-    assert N.decode_message(t) == "DEV_HC -> DEV_AZM (MC_GOTO_FAST, 0x313233)"
+    assert N.decode_message(t) == "DEV_HC -> DEV_RA (MC_GOTO_FAST, 69.182003)"
     N = NexStarAux("", NexStarInputString(t))
     assert N.read_message() == b';\x06\x04\x10\x02123N'
 
@@ -519,6 +564,28 @@ if __name__ == '__main__':
     tt = N.encode_GPS_GET_VER()
     assert N.decode_message(tt) == "DEV_GPS -> DEV_HC (GPS_GET_VER, 0x0100)"
     
+    # Test goto encoding
+    tt = N.encode_MC_SLEW('DEV_RA',1.5)
+    assert N.decode_message(tt) == "DEV_HC -> DEV_RA (MC_GOTO_FAST, 1.499999)"
+    tt = N.encode_MC_SLEW('DEV_DEC',1.5)
+    assert N.decode_message(tt) == "DEV_HC -> DEV_DEC (MC_GOTO_FAST, 1.499999)"
+
+    tt = N.encode_MC_SLEW('DEV_DEC',359.99)
+    assert N.decode_message(tt) == "DEV_HC -> DEV_DEC (MC_GOTO_FAST, 359.990001)"
+
+    # Test angle wrap
+    tt = N.encode_MC_SLEW('DEV_RA',361.5)
+    assert N.decode_message(tt) == "DEV_HC -> DEV_RA (MC_GOTO_FAST, 1.499999)"
+
+    # Test angle wrap
+    tt = N.encode_MC_SLEW('DEV_RA',-360+1.5)
+    assert N.decode_message(tt) == "DEV_HC -> DEV_RA (MC_GOTO_FAST, 1.499999)"
+
+    # Test slow GOTO
+    tt = N.encode_MC_SLEW('DEV_RA',1.5, False)
+    # print(N.decode_message(tt))
+    assert N.decode_message(tt) == "DEV_HC -> DEV_RA (MC_GOTO_SLOW_H, 1.499999)"
+
     print(N.get_stats())
     
     
