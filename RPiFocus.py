@@ -15,7 +15,15 @@ def zoom_region(event,x,y,flags,param):
         # print(pick_list)
 
 # Load an color image in grayscale
-img = cv2.imread('M67-005_10sec.png',0)
+# img = cv2.imread('M67-005_10sec.png',0)
+cap = cv2.VideoCapture(0)
+# Capture frame-by-frame
+ret, frame = cap.read()
+
+# Our operations on the frame come here
+img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+print(img.shape)
+
 
 cv2.namedWindow('image')
 cv2.setMouseCallback('image',zoom_region)
@@ -49,16 +57,19 @@ while k != ord('x'):
     if k == ord('5'):
         current_pick = 4
         print ("Current zoom select: %d"%(current_pick+1))
-     #Draw full window
+    #Draw full window
+    ret, frame = cap.read()
+    # Our operations on the frame come here
+    img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     cv2.imshow('image',img)
     # Draw zoom windows at 200% zoom
     for i in range(5):
         (x,y) = pick_list[i]
         if x != -1:
             x_min = max(x - half_zoom_size, 0)
-            x_max = min(x + half_zoom_size, img.shape[0])
+            x_max = min(x + half_zoom_size, img.shape[1])
             y_min = max(y - half_zoom_size, 0)
-            y_max = min(y + half_zoom_size, img.shape[1])
+            y_max = min(y + half_zoom_size, img.shape[0])
             # print(x_min, x_max, y_min, y_max)
             cv2.imshow("Zoom %d"%i, cv2.resize(img[y_min:y_max+1, x_min:x_max+1], None, fx=zoom_factor, fy=zoom_factor))
         
